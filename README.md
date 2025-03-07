@@ -61,13 +61,6 @@ TWILIO_PHONE_NUMBER=your_twilio_phone_number
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Default Admin Account
-
-A default admin account is automatically created when the application first connects to the database:
-
-- Mobile: 9999999999
-- Password: admin123
-
 ## Project Structure
 
 ```
