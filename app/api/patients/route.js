@@ -4,12 +4,29 @@ import User from "../../../models/User";
 import { withAuth } from "../../../middleware/auth";
 import bcrypt from "bcrypt";
 
-// Get all patients
+// Get patients with optional search by mobile number
 async function getPatients(req) {
   try {
     await connectToDatabase();
 
-    const patients = await User.find({ role: "patient" }).select("-password");
+    // Get search query from URL
+    const url = new URL(req.url);
+    const searchQuery = url.searchParams.get("search");
+
+    let query = { role: "patient" };
+
+    // If search query exists, add it to the query
+    if (searchQuery) {
+      query.mobile = { $regex: searchQuery, $options: "i" };
+    }
+
+    // Limit the number of results if no search query
+    const limit = searchQuery ? 0 : 20;
+
+    const patients = await User.find(query)
+      .select("-password")
+      .limit(limit)
+      .sort({ createdAt: -1 });
 
     return NextResponse.json({ patients }, { status: 200 });
   } catch (error) {
@@ -32,6 +49,18 @@ async function createPatient(req) {
     if (!name || !mobile) {
       return NextResponse.json(
         { error: "Name and mobile number are required" },
+        { status: 400 }
+      );
+    }
+
+    // Validate mobile number format (10 digits, optionally with +91 country code)
+    const mobileRegex = /^(\+91)?[6-9]\d{9}$/;
+    if (!mobileRegex.test(mobile)) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid mobile number format. Please enter a valid 10-digit Indian mobile number",
+        },
         { status: 400 }
       );
     }

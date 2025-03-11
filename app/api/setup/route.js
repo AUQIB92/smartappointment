@@ -30,9 +30,6 @@ export async function GET(req) {
       // Create admin if it doesn't exist
       const hashedPassword = await bcrypt.hash("admin123", 10);
 
-      // Generate a unique clerkId for admin
-      const adminClerkId = "admin-" + new mongoose.Types.ObjectId().toString();
-
       const newAdmin = new User({
         name: "Admin",
         mobile: "9999999999",
@@ -41,7 +38,6 @@ export async function GET(req) {
         password: hashedPassword,
         role: "admin",
         verified: true,
-        clerkId: adminClerkId,
       });
 
       await newAdmin.save();
@@ -65,6 +61,48 @@ export async function GET(req) {
         message: "Error during setup",
         error: error.message,
       },
+      { status: 500 }
+    );
+  }
+}
+
+// Initialize admin user
+async function initializeAdmin() {
+  try {
+    await connectToDatabase();
+
+    // Check if admin already exists
+    const existingAdmin = await User.findOne({ role: "admin" });
+    if (existingAdmin) {
+      return NextResponse.json(
+        { message: "Admin already initialized" },
+        { status: 200 }
+      );
+    }
+
+    // Create admin user
+    const hashedPassword = await bcrypt.hash("admin123", 10);
+
+    const newAdmin = new User({
+      name: "Admin",
+      mobile: "9999999999",
+      email: "admin@drimranshealthcare.com",
+      address: "Admin Office",
+      password: hashedPassword,
+      role: "admin",
+      verified: true,
+    });
+
+    await newAdmin.save();
+
+    return NextResponse.json(
+      { message: "Admin initialized successfully" },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error("Initialize admin error:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

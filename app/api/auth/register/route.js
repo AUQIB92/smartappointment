@@ -2,80 +2,81 @@ import { NextResponse } from "next/server";
 import connectToDatabase from "../../../../lib/db";
 import User from "../../../../models/User";
 import { generateOTP, sendOTP } from "../../../../lib/twilio";
+import bcrypt from "bcrypt";
+
+// Validate mobile number function
+function validateMobileNumber(mobile) {
+  const mobileRegex = /^(\+91)?[6-9]\d{9}$/;
+  return mobileRegex.test(mobile);
+}
 
 export async function POST(req) {
   try {
     await connectToDatabase();
 
-    const { name, mobile, address, role } = await req.json();
+    // Parse request body
+    const {
+      name,
+      email,
+      mobile,
+      password,
+      role = "patient",
+    } = await req.json();
 
-    // Validate required fields
-    if (!name || !mobile || !address) {
+    // Check if required fields exist
+    if (!name || !mobile || !password) {
       return NextResponse.json(
-        { error: "All fields are required" },
+        { error: "Name, mobile, and password are required" },
         { status: 400 }
       );
     }
 
-    // Ensure only patients can register through this endpoint
-    if (role !== "patient") {
+    // Validate mobile number format
+    if (!validateMobileNumber(mobile)) {
       return NextResponse.json(
-        { error: "Only patients can register through this endpoint" },
-        { status: 403 }
+        {
+          error:
+            "Invalid mobile number format. Please enter a valid 10-digit Indian mobile number",
+        },
+        { status: 400 }
       );
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({ mobile });
-
     if (existingUser) {
       return NextResponse.json(
-        { error: "User with this mobile number already exists" },
-        { status: 409 }
+        { error: "A user with this mobile number already exists" },
+        { status: 400 }
       );
     }
 
-    // Generate OTP
-    const otp = generateOTP();
-    const otpExpiry = new Date();
-    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10); // OTP valid for 10 minutes
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
-    const newUser = new User({
+    // Create user
+    const user = new User({
       name,
+      email: email || `${mobile}@placeholder.com`, // Use email if provided, otherwise create placeholder
       mobile,
-      address,
-      role: "patient", // Force role to be patient
-      otp: {
-        code: otp,
-        expiresAt: otpExpiry,
-      },
-      verified: false,
+      password: hashedPassword,
+      role,
     });
 
-    await newUser.save();
+    await user.save();
 
-    // Send OTP via Twilio
-    const result = await sendOTP(mobile, otp);
-
-    if (!result.success) {
-      return NextResponse.json(
-        { error: "Failed to send OTP" },
-        { status: 500 }
-      );
-    }
+    // Don't return the password
+    const userToReturn = { ...user.toObject() };
+    delete userToReturn.password;
 
     return NextResponse.json(
-      {
-        message: "User registered successfully. OTP sent for verification.",
-        userId: newUser._id,
-      },
+      { message: "User registered successfully", user: userToReturn },
       { status: 201 }
     );
   } catch (error) {
     console.error("Registration error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "An error occurred during registration" },
       { status: 500 }
     );
   }

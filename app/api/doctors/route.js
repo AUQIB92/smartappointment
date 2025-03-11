@@ -30,78 +30,64 @@ async function createDoctor(req) {
   try {
     await connectToDatabase();
 
-    const { name, mobile, address, specialization, qualifications, email } =
-      await req.json();
+    const {
+      name,
+      mobile,
+      email,
+      address,
+      specialization,
+      qualifications,
+      password,
+    } = await req.json();
 
     // Validate required fields
-    if (!name || !mobile || !address || !specialization) {
+    if (!name || !mobile || !specialization) {
       return NextResponse.json(
-        { error: "All fields are required" },
+        { error: "Name, mobile, and specialization are required" },
         { status: 400 }
       );
     }
 
-    // Check if doctor already exists
-    const existingDoctor = await User.findOne({ mobile, role: "doctor" });
-
+    // Check if doctor already exists with the same mobile
+    const existingDoctor = await User.findOne({ mobile });
     if (existingDoctor) {
       return NextResponse.json(
-        { error: "Doctor with this mobile number already exists" },
-        { status: 409 }
+        { error: "A user with this mobile number already exists" },
+        { status: 400 }
       );
     }
 
-    // Check if email is already in use (if provided)
-    if (email) {
-      const existingUserWithEmail = await User.findOne({ email });
-      if (existingUserWithEmail) {
-        return NextResponse.json(
-          { error: "Email is already in use" },
-          { status: 409 }
-        );
-      }
-    }
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password || `${mobile}123`, 10);
 
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-    // Generate a unique clerkId for the doctor
-    const doctorClerkId = "doctor-" + new mongoose.Types.ObjectId().toString();
-
-    // Create new doctor
+    // Create the new doctor
     const newDoctor = new User({
       name,
       mobile,
-      address,
-      email: email || `doctor_${mobile}@drimranshealthcare.com`, // Generate a unique email if not provided
-      password: hashedPassword,
+      email: email || `${mobile}@placeholder.com`,
+      address: address || "Not provided",
       role: "doctor",
       specialization,
-      qualifications,
-      verified: true, // Doctors added by admin are automatically verified
-      clerkId: doctorClerkId, // Add unique clerkId
+      qualifications: qualifications || "Not provided",
+      password: hashedPassword,
+      verified: true, // Doctors are verified by default
     });
 
     await newDoctor.save();
 
+    // Don't return the password
+    const doctorToReturn = { ...newDoctor.toObject() };
+    delete doctorToReturn.password;
+
     return NextResponse.json(
       {
-        message: "Doctor added successfully",
-        doctor: {
-          id: newDoctor._id,
-          name: newDoctor.name,
-          mobile: newDoctor.mobile,
-          email: newDoctor.email,
-          specialization: newDoctor.specialization,
-          clerkId: newDoctor.clerkId,
-        },
-        tempPassword, // This would be sent to the doctor via SMS in a real application
+        message: "Doctor created successfully",
+        doctor: doctorToReturn,
       },
       { status: 201 }
     );
   } catch (error) {
-    console.error("Add doctor error:", error);
+    console.error("Create doctor error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

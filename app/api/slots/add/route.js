@@ -88,21 +88,100 @@ async function addSlot(req) {
       return NextResponse.json({ error: "Doctor not found" }, { status: 404 });
     }
 
-    // Check if slot already exists
-    const existingSlot = await DoctorSlot.findOne({
+    // Build query to check for overlapping slots
+    let overlapQuery = {
       doctor_id,
-      day,
-      start_time,
-    });
+      is_available: true,
+    };
 
-    if (existingSlot) {
-      return NextResponse.json(
+    // If this is a specific date slot, check for overlaps on that date
+    if (date) {
+      // Convert date string to Date object for comparison
+      const slotDate = new Date(date);
+      slotDate.setHours(0, 0, 0, 0); // Set to start of day
+
+      const nextDay = new Date(slotDate);
+      nextDay.setDate(nextDay.getDate() + 1); // Set to start of next day
+
+      overlapQuery.$or = [
+        // Check for overlaps with other specific date slots on the same date
         {
-          error:
-            "A slot with this time already exists for this doctor on this day",
+          date: {
+            $gte: slotDate,
+            $lt: nextDay,
+          },
         },
-        { status: 409 }
-      );
+        // Check for overlaps with weekly recurring slots on the same day of week
+        {
+          date: null,
+          day,
+        },
+      ];
+    } else {
+      // For weekly recurring slots, check for overlaps on the same day
+      overlapQuery.day = day;
+      overlapQuery.date = null;
+    }
+
+    // Find all existing slots for this doctor on this day/date
+    const existingSlots = await DoctorSlot.find(overlapQuery);
+
+    // Check for time overlaps with existing slots
+    for (const slot of existingSlots) {
+      const [existingStartHours, existingStartMinutes] = slot.start_time
+        .split(":")
+        .map(Number);
+      const [existingEndHours, existingEndMinutes] = slot.end_time
+        .split(":")
+        .map(Number);
+
+      const existingStartTotalMinutes =
+        existingStartHours * 60 + existingStartMinutes;
+      const existingEndTotalMinutes =
+        existingEndHours * 60 + existingEndMinutes;
+
+      // Check if the new slot overlaps with this existing slot
+      // Overlap occurs if:
+      // 1. New slot starts during existing slot (new start is between existing start and end)
+      // 2. New slot ends during existing slot (new end is between existing start and end)
+      // 3. New slot completely contains existing slot (new start <= existing start AND new end >= existing end)
+      // 4. Existing slot completely contains new slot (existing start <= new start AND existing end >= new end)
+
+      const newSlotStartsDuringExisting =
+        startTotalMinutes >= existingStartTotalMinutes &&
+        startTotalMinutes < existingEndTotalMinutes;
+
+      const newSlotEndsDuringExisting =
+        endTotalMinutes > existingStartTotalMinutes &&
+        endTotalMinutes <= existingEndTotalMinutes;
+
+      const newSlotContainsExisting =
+        startTotalMinutes <= existingStartTotalMinutes &&
+        endTotalMinutes >= existingEndTotalMinutes;
+
+      const existingSlotContainsNew =
+        existingStartTotalMinutes <= startTotalMinutes &&
+        existingEndTotalMinutes >= endTotalMinutes;
+
+      if (
+        newSlotStartsDuringExisting ||
+        newSlotEndsDuringExisting ||
+        newSlotContainsExisting ||
+        existingSlotContainsNew
+      ) {
+        return NextResponse.json(
+          {
+            error: "This slot overlaps with an existing slot",
+            conflictingSlot: {
+              day: slot.day,
+              date: slot.date,
+              start_time: slot.start_time,
+              end_time: slot.end_time,
+            },
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Create new slot

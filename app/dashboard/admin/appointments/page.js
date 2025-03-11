@@ -100,8 +100,13 @@ export default function AdminAppointments() {
   const handleStatusChange = async (appointmentId, newStatus) => {
     try {
       const token = localStorage.getItem("token");
+
+      console.log(
+        `Updating appointment ${appointmentId} to status: ${newStatus}`
+      );
+
       const res = await fetch(`/api/appointments/${appointmentId}`, {
-        method: "PUT",
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -120,9 +125,11 @@ export default function AdminAppointments() {
           )
         );
       } else {
+        console.error("Error updating appointment:", data);
         toast.error(data.error || "Failed to update appointment status");
       }
     } catch (error) {
+      console.error("Exception updating appointment:", error);
       toast.error("An error occurred. Please try again.");
     }
   };

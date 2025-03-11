@@ -56,18 +56,6 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  // Add clerkId field with a unique identifier for admin
-  clerkId: {
-    type: String,
-    sparse: true, // This allows multiple null values
-    unique: true, // Make sure it's unique
-    default: function () {
-      // Generate a unique ID for admin users to avoid the duplicate key error
-      return this.role === "admin"
-        ? "admin-" + new mongoose.Types.ObjectId().toString()
-        : null;
-    },
-  },
 });
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
