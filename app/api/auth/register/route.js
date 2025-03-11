@@ -19,14 +19,14 @@ export async function POST(req) {
       name,
       email,
       mobile,
-      password,
+      address,
       role = "patient",
     } = await req.json();
 
     // Check if required fields exist
-    if (!name || !mobile || !password) {
+    if (!name || !mobile) {
       return NextResponse.json(
-        { error: "Name, mobile, and password are required" },
+        { error: "Name and mobile are required" },
         { status: 400 }
       );
     }
@@ -51,26 +51,63 @@ export async function POST(req) {
       );
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Generate a temporary password
+    const tempPassword = `${mobile}123`;
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    // Generate OTP
+    const otp = generateOTP();
+    const otpExpiry = new Date();
+    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10); // OTP valid for 10 minutes
 
     // Create user
     const user = new User({
       name,
       email: email || `${mobile}@placeholder.com`, // Use email if provided, otherwise create placeholder
       mobile,
+      address: address || "Not provided",
       password: hashedPassword,
       role,
+      otp: {
+        code: otp,
+        expiresAt: otpExpiry,
+      },
     });
 
     await user.save();
+
+    // DEVELOPMENT MODE: Skip Twilio and log OTP instead
+    console.log(`=== DEVELOPMENT MODE: OTP for ${mobile} is ${otp} ===`);
+
+    // In production, this would use Twilio
+    let result = { success: true };
+
+    // Uncomment to use real Twilio in production
+    // try {
+    //   result = await sendOTP(mobile, otp);
+    // } catch (error) {
+    //   console.error("Twilio error:", error);
+    //   result = { success: false };
+    // }
+
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Failed to send OTP" },
+        { status: 500 }
+      );
+    }
 
     // Don't return the password
     const userToReturn = { ...user.toObject() };
     delete userToReturn.password;
 
     return NextResponse.json(
-      { message: "User registered successfully", user: userToReturn },
+      { 
+        message: "OTP sent successfully", 
+        user: userToReturn,
+        // DEVELOPMENT ONLY: Include OTP in response (remove in production)
+        otp: process.env.NODE_ENV === "development" ? otp : undefined,
+      },
       { status: 201 }
     );
   } catch (error) {
