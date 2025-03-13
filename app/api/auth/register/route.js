@@ -1,115 +1,82 @@
 import { NextResponse } from "next/server";
-import connectToDatabase from "../../../../lib/db";
-import User from "../../../../models/User";
-import { generateOTP, sendOTP } from "../../../../lib/twilio";
-import bcrypt from "bcrypt";
+import { generateAndStoreOTP } from "../../../../lib/otpService";
 
-// Validate mobile number function
-function validateMobileNumber(mobile) {
-  const mobileRegex = /^(\+91)?[6-9]\d{9}$/;
-  return mobileRegex.test(mobile);
-}
-
+/**
+ * API route handler for user registration with SMS OTP
+ * POST /api/auth/register
+ */
 export async function POST(req) {
   try {
-    await connectToDatabase();
-
     // Parse request body
+    const body = await req.json();
+    console.log('Register API - Request body:', JSON.stringify(body, null, 2));
+    
     const {
       name,
-      email,
       mobile,
       address,
-      role = "patient",
-    } = await req.json();
+      contactMethod,
+      email, // Optional email field
+    } = body;
 
     // Check if required fields exist
-    if (!name || !mobile) {
+    if (!name || !mobile || !address) {
+      console.log('Register API - Missing required fields');
       return NextResponse.json(
-        { error: "Name and mobile are required" },
+        { error: "Name, mobile number, and address are required" },
         { status: 400 }
       );
     }
 
-    // Validate mobile number format
-    if (!validateMobileNumber(mobile)) {
+    // Validate mobile number format (basic validation)
+    if (mobile.length < 10) {
+      console.log('Register API - Invalid mobile number format');
       return NextResponse.json(
         {
-          error:
-            "Invalid mobile number format. Please enter a valid 10-digit Indian mobile number",
+          error: "Invalid mobile number format. Please enter a valid mobile number",
         },
         { status: 400 }
       );
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ mobile });
-    if (existingUser) {
+    // Validate email format if provided
+    if (email && !email.includes('@')) {
+      console.log('Register API - Invalid email format');
       return NextResponse.json(
-        { error: "A user with this mobile number already exists" },
+        {
+          error: "Invalid email format. Please enter a valid email address",
+        },
         { status: 400 }
       );
     }
 
-    // Generate a temporary password
-    const tempPassword = `${mobile}123`;
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-    // Generate OTP
-    const otp = generateOTP();
-    const otpExpiry = new Date();
-    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10); // OTP valid for 10 minutes
-
-    // Create user
-    const user = new User({
-      name,
-      email: email || `${mobile}@placeholder.com`, // Use email if provided, otherwise create placeholder
-      mobile,
-      address: address || "Not provided",
-      password: hashedPassword,
-      role,
-      otp: {
-        code: otp,
-        expiresAt: otpExpiry,
-      },
-    });
-
-    await user.save();
-
-    // DEVELOPMENT MODE: Skip Twilio and log OTP instead
-    console.log(`=== DEVELOPMENT MODE: OTP for ${mobile} is ${otp} ===`);
-
-    // In production, this would use Twilio
-    let result = { success: true };
-
-    // Uncomment to use real Twilio in production
-    // try {
-    //   result = await sendOTP(mobile, otp);
-    // } catch (error) {
-    //   console.error("Twilio error:", error);
-    //   result = { success: false };
-    // }
-
+    // Generate and store OTP, passing email as additional data if provided
+    const additionalData = email ? { email } : {};
+    const result = await generateAndStoreOTP(mobile, 'phone', true, additionalData);
+    
     if (!result.success) {
+      console.error('Register API - OTP generation failed:', result.error);
       return NextResponse.json(
-        { error: "Failed to send OTP" },
+        { error: result.error || 'Failed to generate OTP' },
         { status: 500 }
       );
     }
+    
+    const otp = result.otp;
+    console.log(`Generated OTP for ${mobile}: ${otp}`);
 
-    // Don't return the password
-    const userToReturn = { ...user.toObject() };
-    delete userToReturn.password;
-
-    return NextResponse.json(
-      { 
-        message: "OTP sent successfully", 
-        user: userToReturn,
-        // DEVELOPMENT ONLY: Include OTP in response (remove in production)
-        otp: process.env.NODE_ENV === "development" ? otp : undefined,
-      },
-      { status: 201 }
-    );
+    // For demo purposes, we'll just return success
+    // In a real application, you would send the OTP via SMS here
+    
+    const response = {
+      success: true,
+      message: 'OTP sent successfully to your mobile number',
+      // DEVELOPMENT ONLY: Include OTP in response (remove in production)
+      otp: process.env.NODE_ENV === "development" ? otp : undefined,
+    };
+    
+    console.log('Register API - Response:', JSON.stringify(response, null, 2));
+    return NextResponse.json(response);
   } catch (error) {
     console.error("Registration error:", error);
     return NextResponse.json(

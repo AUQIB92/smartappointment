@@ -302,7 +302,7 @@ export default function BookAppointment() {
 
     try {
       // Fetch all slots for this doctor and date directly from the API
-      // This is the same approach used in the admin booking system
+      // The API now handles filtering out booked slots
       const token = localStorage.getItem("token");
       const slotsRes = await fetch(
         `/api/doctors/${selectedDoctor}/slots?date=${selectedDate}`,
@@ -320,6 +320,7 @@ export default function BookAppointment() {
         console.log("Slots data received:", slotsData);
 
         // Process all slots (both regular weekly and admin-added)
+        // The API now returns only available slots
         availableTimeSlots = slotsData.slots
           .filter((slot) => slot.is_available && !slot.booked_by)
           .map((slot) => {
@@ -342,6 +343,21 @@ export default function BookAppointment() {
                 hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening",
             };
           });
+          
+        // Sort slots by time
+        availableTimeSlots.sort((a, b) => {
+          const timeA = a.rawTime.split(":");
+          const timeB = b.rawTime.split(":");
+          const hourA = parseInt(timeA[0]);
+          const hourB = parseInt(timeB[0]);
+          if (hourA !== hourB) return hourA - hourB;
+          return parseInt(timeA[1]) - parseInt(timeB[1]);
+        });
+
+        console.log("Final available time slots:", availableTimeSlots);
+        setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
+        setIsCheckingSlots(false);
+        return;
       } else {
         console.log(
           "Failed to fetch slots from API, falling back to availability data"
@@ -438,53 +454,53 @@ export default function BookAppointment() {
             console.error("Error generating slots from availability:", error);
           }
         });
-      }
+        
+        // Check which slots are already booked
+        const bookedRes = await fetch(
+          `/api/appointments?doctor=${selectedDoctor}&date=${selectedDate}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
-      // Check which slots are already booked
-      const bookedRes = await fetch(
-        `/api/appointments?doctor=${selectedDoctor}&date=${selectedDate}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+        if (bookedRes.ok) {
+          const bookedData = await bookedRes.json();
+          console.log("Booked appointments data:", bookedData);
+
+          // Get all booked time slots for the selected doctor and date
+          const bookedTimes = bookedData.appointments
+            .filter(
+              (app) => app.status === "pending" || app.status === "confirmed"
+            )
+            .map((app) => app.time);
+
+          console.log("Booked times:", bookedTimes);
+
+          // Filter out booked slots
+          availableTimeSlots = availableTimeSlots.filter(
+            (slot) => !bookedTimes.includes(slot.time)
+          );
+
+          // Sort slots by time
+          availableTimeSlots.sort((a, b) => {
+            const timeA = a.rawTime.split(":");
+            const timeB = b.rawTime.split(":");
+            const hourA = parseInt(timeA[0]);
+            const hourB = parseInt(timeB[0]);
+            if (hourA !== hourB) return hourA - hourB;
+            return parseInt(timeA[1]) - parseInt(timeB[1]);
+          });
+
+          console.log("Final available time slots:", availableTimeSlots);
+          setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
+        } else {
+          console.log(
+            "Failed to check booked appointments, showing all available slots"
+          );
+          setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
         }
-      );
-
-      if (bookedRes.ok) {
-        const bookedData = await bookedRes.json();
-        console.log("Booked appointments data:", bookedData);
-
-        // Get all booked time slots for the selected doctor and date
-        const bookedTimes = bookedData.appointments
-          .filter(
-            (app) => app.status === "pending" || app.status === "confirmed"
-          )
-          .map((app) => app.time);
-
-        console.log("Booked times:", bookedTimes);
-
-        // Filter out booked slots
-        availableTimeSlots = availableTimeSlots.filter(
-          (slot) => !bookedTimes.includes(slot.time)
-        );
-
-        // Sort slots by time
-        availableTimeSlots.sort((a, b) => {
-          const timeA = a.rawTime.split(":");
-          const timeB = b.rawTime.split(":");
-          const hourA = parseInt(timeA[0]);
-          const hourB = parseInt(timeB[0]);
-          if (hourA !== hourB) return hourA - hourB;
-          return parseInt(timeA[1]) - parseInt(timeB[1]);
-        });
-
-        console.log("Final available time slots:", availableTimeSlots);
-        setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
-      } else {
-        console.log(
-          "Failed to check booked appointments, showing all available slots"
-        );
-        setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
       }
     } catch (error) {
       console.error("Error checking available slots:", error);

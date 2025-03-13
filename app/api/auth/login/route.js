@@ -1,23 +1,36 @@
 import { NextResponse } from "next/server";
 import connectToDatabase from "../../../../lib/db";
 import User from "../../../../models/User";
-import { generateOTP, sendOTP } from "../../../../lib/twilio";
+import { generateAndStoreOTP } from "../../../../lib/otpService";
 
 export async function POST(req) {
   try {
     await connectToDatabase();
 
-    const { mobile } = await req.json();
+    const { mobile, email, isLogin = true } = await req.json();
 
-    if (!mobile) {
+    // Check if either mobile or email is provided
+    if (!mobile && !email) {
       return NextResponse.json(
-        { error: "Mobile number is required" },
+        { error: "Either mobile number or email is required" },
         { status: 400 }
       );
     }
 
-    // Find user by mobile number
-    let user = await User.findOne({ mobile });
+    // Find user by mobile number or email
+    let user;
+    let identifier;
+    let identifierType;
+
+    if (mobile) {
+      user = await User.findOne({ mobile });
+      identifier = mobile;
+      identifierType = 'phone';
+    } else {
+      user = await User.findOne({ email });
+      identifier = email;
+      identifierType = 'email';
+    }
 
     if (!user) {
       return NextResponse.json(
@@ -26,43 +39,25 @@ export async function POST(req) {
       );
     }
 
-    // Generate OTP
-    const otp = generateOTP();
-    const otpExpiry = new Date();
-    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10); // OTP valid for 10 minutes
-
-    // Update user with OTP
-    user.otp = {
-      code: otp,
-      expiresAt: otpExpiry,
-    };
-
-    await user.save();
-
-    // DEVELOPMENT MODE: Skip Twilio and log OTP instead
-    // This avoids the ECONNRESET error when Twilio is not properly configured
-    console.log(`=== DEVELOPMENT MODE: OTP for ${mobile} is ${otp} ===`);
-
-    // In production, this would use Twilio
-    let result = { success: true };
-
-    // Uncomment to use real Twilio in production
-    // try {
-    //   result = await sendOTP(mobile, otp);
-    // } catch (error) {
-    //   console.error("Twilio error:", error);
-    //   result = { success: false };
-    // }
-
+    // Generate and store OTP
+    const result = await generateAndStoreOTP(identifier, identifierType, !isLogin);
+    
     if (!result.success) {
+      console.error('Login API - OTP generation failed:', result.error);
       return NextResponse.json(
-        { error: "Failed to send OTP" },
+        { error: result.error || 'Failed to generate OTP' },
         { status: 500 }
       );
     }
+    
+    const otp = result.otp;
+    
+    // DEVELOPMENT MODE: Log OTP
+    console.log(`=== DEVELOPMENT MODE: OTP for ${identifier} is ${otp} ===`);
 
     return NextResponse.json(
       {
+        success: true,
         message: "OTP sent successfully",
         // DEVELOPMENT ONLY: Include OTP in response (remove in production)
         otp: process.env.NODE_ENV === "development" ? otp : undefined,

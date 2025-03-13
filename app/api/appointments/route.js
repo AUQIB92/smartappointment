@@ -8,6 +8,7 @@ import Service from "../../../models/Service";
 import { withAuth } from "../../../middleware/auth";
 import DoctorSlot from "../../../models/DoctorSlot";
 import { sendBookingConfirmation } from "../../../lib/twilio";
+import { sendBookingConfirmationEmail } from "../../../lib/emailService";
 
 // Get appointments based on user role
 async function getAppointments(req) {
@@ -232,11 +233,64 @@ async function createAppointment(req) {
 
     await appointment.save();
 
-    // If this is a specific date slot (not a weekly recurring slot), mark it as booked
-    if (validSlot.date) {
-      validSlot.booked_by = actualPatientId;
-      validSlot.booking_time = new Date();
-      await validSlot.save();
+    // Mark the slot as booked
+    if (validSlot) {
+      // If this is a specific date slot (not a weekly recurring slot), mark it as booked
+      if (validSlot.date) {
+        console.log(`Marking specific date slot ${validSlot._id} as booked`);
+        validSlot.booked_by = actualPatientId;
+        validSlot.booking_time = new Date();
+        await validSlot.save();
+      } else {
+        // For weekly recurring slots, create a new specific date slot that is marked as booked
+        // This prevents the weekly slot from being permanently marked as booked
+        console.log(`Creating booked specific date slot for weekly slot ${validSlot._id}`);
+        
+        // First, check if a specific date slot already exists for this doctor, date, and time
+        const specificDateObj = new Date(date);
+        const existingSpecificSlot = await DoctorSlot.findOne({
+          doctor_id: validSlot.doctor_id,
+          date: {
+            $gte: new Date(specificDateObj.setHours(0, 0, 0, 0)),
+            $lte: new Date(specificDateObj.setHours(23, 59, 59, 999)),
+          },
+          start_time: validSlot.start_time
+        });
+        
+        if (existingSpecificSlot) {
+          // If a specific date slot already exists, update it instead of creating a new one
+          console.log(`Found existing specific date slot ${existingSpecificSlot._id}, updating it`);
+          existingSpecificSlot.is_available = false;
+          existingSpecificSlot.booked_by = actualPatientId;
+          existingSpecificSlot.booking_time = new Date();
+          await existingSpecificSlot.save();
+          console.log(`Updated existing specific date slot: ${existingSpecificSlot._id}`);
+        } else {
+          // Create a new specific date slot
+          const bookedSlot = new DoctorSlot({
+            doctor_id: validSlot.doctor_id,
+            day: validSlot.day,
+            date: new Date(date), // Use the specific date
+            start_time: validSlot.start_time,
+            end_time: validSlot.end_time,
+            duration: validSlot.duration,
+            is_available: false, // Mark as unavailable
+            is_admin_only: validSlot.is_admin_only,
+            booked_by: actualPatientId,
+            booking_time: new Date(),
+          });
+          
+          try {
+            await bookedSlot.save();
+            console.log(`Created booked specific date slot: ${bookedSlot._id}`);
+          } catch (slotError) {
+            // If there's an error saving the slot (e.g., duplicate key), log it but don't fail the booking
+            console.error("Error creating specific date slot:", slotError);
+            // The appointment is still created, we just couldn't mark the slot as booked
+            console.log("Appointment created but couldn't mark slot as booked");
+          }
+        }
+      }
     }
 
     // Send booking confirmation SMS
@@ -257,6 +311,30 @@ async function createAppointment(req) {
     } catch (smsError) {
       // Just log the error but don't fail the booking
       console.error("Error sending booking confirmation SMS:", smsError);
+    }
+
+    // Send booking confirmation email if patient has an email
+    if (patient.email) {
+      try {
+        // Prepare data for the email
+        const emailData = {
+          appointmentId: appointment._id,
+          doctorName: doctor.name,
+          serviceName: service.name,
+          date: appointment.date,
+          time: appointment.time,
+          amount: appointment.payment_amount,
+          paymentMethod: appointment.payment_method,
+          notes: appointment.notes || 'None'
+        };
+
+        // Send email to patient
+        await sendBookingConfirmationEmail(patient.email, patient.name, emailData);
+        console.log(`Booking confirmation email sent to ${patient.email}`);
+      } catch (emailError) {
+        // Just log the error but don't fail the booking
+        console.error("Error sending booking confirmation email:", emailError);
+      }
     }
 
     return NextResponse.json(

@@ -11,8 +11,7 @@ const userSchema = new mongoose.Schema({
   },
   mobile: {
     type: String,
-    required: true,
-    unique: true,
+    sparse: true,
   },
   email: {
     type: String,
@@ -22,12 +21,17 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: false, // Not required for OTP-based login
+    required: false,
   },
   role: {
     type: String,
     enum: ["patient", "doctor", "admin"],
     default: "patient",
+  },
+  contactMethod: {
+    type: String,
+    enum: ['sms', 'whatsapp', 'email'],
+    default: 'sms',
   },
   otp: {
     code: {
@@ -39,6 +43,7 @@ const userSchema = new mongoose.Schema({
       default: null,
     },
   },
+  otpExpiry: Date,
   verified: {
     type: Boolean,
     default: false,
@@ -56,7 +61,16 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
 });
 
+// Make sure indexes are properly set up - define them only once here
+userSchema.index({ email: 1 }, { sparse: true });
+userSchema.index({ mobile: 1 }, { sparse: true, unique: true });
+
+// Use a different approach to handle model creation to avoid duplicate model errors
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 export default User;

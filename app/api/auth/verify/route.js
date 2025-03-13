@@ -1,82 +1,117 @@
 import { NextResponse } from "next/server";
-import connectToDatabase from "../../../../lib/db";
-import User from "../../../../models/User";
-import { signToken } from "../../../../lib/jwt";
+import jwt from "jsonwebtoken";
+import { verifyOTP, updateUserAfterVerification } from "../../../../lib/otpService";
+import { sendWelcomeEmail } from "../../../../lib/emailService";
 
+// Secret key for JWT token generation
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+/**
+ * API route handler for verifying OTP sent via SMS
+ * POST /api/auth/verify
+ */
 export async function POST(req) {
   try {
-    await connectToDatabase();
+    // Parse request body
+    const body = await req.json();
+    console.log('Verify API - Request body:', JSON.stringify(body, null, 2));
+    
+    const { mobile, email, otp, isRegistration, name, address } = body;
 
-    const { mobile, otp, isRegistration } = await req.json();
-
-    if (!mobile || !otp) {
+    // Validate required fields - either mobile or email must be provided
+    if ((!mobile && !email) || !otp) {
+      console.log('Verify API - Missing required fields');
       return NextResponse.json(
-        { error: "Mobile number and OTP are required" },
+        { error: "Either mobile number or email, and OTP are required" },
         { status: 400 }
       );
     }
 
-    // Find user by mobile number
-    const user = await User.findOne({ mobile });
+    // Determine identifier and type based on what was provided
+    const identifier = mobile || email;
+    const identifierType = mobile ? 'sms' : 'email';
 
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    // Check if OTP exists and is valid
-    if (!user.otp || !user.otp.code || !user.otp.expiresAt) {
-      return NextResponse.json(
-        { error: "No OTP found. Please request a new one." },
-        { status: 400 }
-      );
-    }
-
-    // Check if OTP is expired
-    if (new Date() > new Date(user.otp.expiresAt)) {
-      return NextResponse.json(
-        { error: "OTP has expired. Please request a new one." },
-        { status: 400 }
-      );
-    }
-
+    console.log(`Verify API - Verifying OTP: ${otp} for ${identifierType}: ${identifier}`);
+    
     // Verify OTP
-    if (user.otp.code !== otp) {
-      return NextResponse.json({ error: "Invalid OTP" }, { status: 400 });
+    const verificationResult = await verifyOTP(identifier, identifierType, otp);
+    
+    if (!verificationResult.success) {
+      console.log('Verify API - Invalid OTP:', verificationResult.error);
+      return NextResponse.json(
+        { error: verificationResult.error || "Invalid OTP" },
+        { status: 400 }
+      );
     }
 
-    // If this is a registration verification, mark user as verified
+    // Get the user from the verification result
+    const user = verificationResult.user;
+    
+    // If this is a registration, update user information
     if (isRegistration) {
-      user.verified = true;
+      const updateData = {
+        name: name || 'User',
+        address: address || 'Address',
+      };
+      
+      // Add email to update data if provided and not used as identifier
+      if (email && identifierType !== 'email') {
+        updateData.email = email;
+      }
+      
+      const updateResult = await updateUserAfterVerification(identifier, identifierType, updateData);
+      
+      if (!updateResult.success) {
+        console.error('Verify API - Failed to update user:', updateResult.error);
+        return NextResponse.json(
+          { error: updateResult.error || "Failed to update user information" },
+          { status: 500 }
+        );
+      }
+      
+      // If this is a registration and user has an email, send welcome email
+      if (email) {
+        try {
+          await sendWelcomeEmail(email, name || 'User');
+          console.log(`Welcome email sent to ${email}`);
+        } catch (emailError) {
+          // Just log the error but don't fail the verification
+          console.error('Error sending welcome email:', emailError);
+        }
+      }
     }
 
-    // Clear OTP after successful verification
-    user.otp = {
-      code: null,
-      expiresAt: null,
-    };
+    // Get the user's role from the database
+    const userRole = user.role || 'patient';
+    console.log(`Verify API - User role: ${userRole}`);
 
-    await user.save();
-
-    // Generate JWT token
-    const token = signToken({
-      id: user._id,
-      mobile: user.mobile,
-      role: user.role,
-      name: user.name,
-    });
-
-    return NextResponse.json(
-      {
-        message: "OTP verified successfully",
-        token,
-        role: user.role,
+    // Generate JWT token for authentication with the correct role
+    const token = jwt.sign(
+      { 
+        id: user._id.toString(),
+        mobile: user.mobile,
+        email: user.email,
+        role: userRole,
+        name: user.name || 'User',
       },
-      { status: 200 }
+      JWT_SECRET,
+      { expiresIn: '7d' }
     );
+
+    // Return success response with token and the correct role
+    const response = {
+      success: true,
+      message: 'OTP verified successfully',
+      token,
+      role: userRole,
+    };
+    
+    console.log('Verify API - Response:', JSON.stringify(response, null, 2));
+    return NextResponse.json(response);
   } catch (error) {
-    console.error("OTP verification error:", error);
+    console.error("Verification error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "An error occurred while verifying OTP" },
       { status: 500 }
     );
   }

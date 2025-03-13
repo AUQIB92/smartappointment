@@ -62,7 +62,33 @@ slotSchema.pre("save", function (next) {
 });
 
 // Create a compound index to ensure uniqueness of doctor slots
-slotSchema.index({ doctor_id: 1, day: 1, start_time: 1 }, { unique: true });
+// For weekly recurring slots (date is null), we need uniqueness on doctor_id, day, start_time
+// For specific date slots, we need uniqueness on doctor_id, date, start_time
+slotSchema.index(
+  { 
+    doctor_id: 1, 
+    day: 1, 
+    start_time: 1,
+    date: 1 
+  }, 
+  { 
+    unique: true,
+    partialFilterExpression: { date: null } // This makes the index only apply to documents where date is null
+  }
+);
+
+// Add a separate index for specific date slots
+slotSchema.index(
+  { 
+    doctor_id: 1, 
+    date: 1, 
+    start_time: 1 
+  }, 
+  { 
+    unique: true,
+    partialFilterExpression: { date: { $ne: null } } // This makes the index only apply to documents where date is not null
+  }
+);
 
 // Drop the problematic index if it exists (this will be executed when the model is compiled)
 if (mongoose.connection.readyState === 1) {
@@ -71,6 +97,18 @@ if (mongoose.connection.readyState === 1) {
     .collection("doctorslots")
     .dropIndex("doctor_id_1_date_1")
     .then(() => console.log("Dropped problematic index"))
+    .catch((err) => {
+      // Ignore if index doesn't exist
+      if (err.code !== 27) {
+        console.error("Error dropping index:", err);
+      }
+    });
+    
+  // Also drop the old compound index
+  mongoose.connection.db
+    .collection("doctorslots")
+    .dropIndex("doctor_id_1_day_1_start_time_1")
+    .then(() => console.log("Dropped old compound index"))
     .catch((err) => {
       // Ignore if index doesn't exist
       if (err.code !== 27) {

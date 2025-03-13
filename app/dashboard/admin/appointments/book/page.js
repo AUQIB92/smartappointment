@@ -268,24 +268,17 @@ export default function AdminBookAppointment() {
   };
 
   const checkAvailableSlots = async () => {
-    if (!selectedDoctor || !selectedDate) return;
+    if (!selectedDoctor || !selectedDate) {
+      setIsCheckingSlots(false);
+      return;
+    }
 
     setIsCheckingSlots(true);
-    try {
-      // Get day of week for the selected date
-      const date = new Date(selectedDate);
-      const days = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-      ];
-      const dayOfWeek = days[date.getDay()];
+    console.log("Checking available slots for date:", selectedDate);
 
-      // Fetch all slots for this doctor and date (both regular and admin-added)
+    try {
+      // Fetch all slots for this doctor and date directly from the API
+      // The API now handles filtering out booked slots
       const token = localStorage.getItem("token");
       const slotsRes = await fetch(
         `/api/doctors/${selectedDoctor}/slots?date=${selectedDate}`,
@@ -300,8 +293,10 @@ export default function AdminBookAppointment() {
 
       if (slotsRes.ok) {
         const slotsData = await slotsRes.json();
+        console.log("Slots data received:", slotsData);
 
         // Process all slots (both regular weekly and admin-added)
+        // The API now returns only available slots
         availableTimeSlots = slotsData.slots
           .filter((slot) => slot.is_available && !slot.booked_by)
           .map((slot) => {
@@ -315,7 +310,7 @@ export default function AdminBookAppointment() {
             // Create a slot object with additional metadata
             return {
               id: slot._id,
-              time: `${formattedHour.toString().padStart(2, "0")}:${minute
+              time: `${formattedHour}:${minute
                 .toString()
                 .padStart(2, "0")} ${ampm}`,
               rawTime: `${hours}:${minutes}`,
@@ -324,35 +319,7 @@ export default function AdminBookAppointment() {
                 hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening",
             };
           });
-      }
-
-      // Check which slots are already booked
-      const bookedRes = await fetch(
-        `/api/appointments?doctor=${selectedDoctor}&date=${selectedDate}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (bookedRes.ok) {
-        const bookedData = await bookedRes.json();
-
-        // Get all booked time slots for the selected doctor and date
-        const bookedTimes = bookedData.appointments
-          .filter(
-            (app) => app.status === "pending" || app.status === "confirmed"
-          )
-          .map((app) => app.time);
-
-        setBookedSlots(bookedTimes);
-
-        // Filter out booked slots
-        availableTimeSlots = availableTimeSlots.filter(
-          (slot) => !bookedTimes.includes(slot.time)
-        );
-
+          
         // Sort slots by time
         availableTimeSlots.sort((a, b) => {
           const timeA = a.rawTime.split(":");
@@ -363,13 +330,17 @@ export default function AdminBookAppointment() {
           return parseInt(timeA[1]) - parseInt(timeB[1]);
         });
 
-        setAvailableSlots(availableTimeSlots);
+        console.log("Final available time slots:", availableTimeSlots);
+        setAvailableSlots(availableTimeSlots.map((slot) => slot.time));
       } else {
-        toast.error(bookedData.error || "Failed to check booked appointments");
+        console.error("Failed to fetch slots from API");
+        toast.error("Failed to load available slots");
+        setAvailableSlots([]);
       }
     } catch (error) {
-      console.error("Error checking slots:", error);
-      toast.error("An error occurred. Please try again.");
+      console.error("Error checking available slots:", error);
+      toast.error("Failed to load available slots");
+      setAvailableSlots([]);
     } finally {
       setIsCheckingSlots(false);
     }
